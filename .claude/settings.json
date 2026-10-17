@@ -1,0 +1,8 @@
+{
+  "enabledPlugins": {
+    "dt-iris@dreamteam-hq": true,
+    "dt-brain@dreamteam-hq": true
+  },
+  "enableAllProjectMcpServers": true,
+  "agent": "dt-iris:iris"
+}

@@ -1,0 +1,7 @@
+.brains-provisioned
+.dt-brain-domains/
+.venv.dt-brain/
+.mcp.json
+
+# private committee data — never commit
+data/private/

@@ -1,0 +1,5 @@
+- [Matt](user_matt.md) — background, brevity, stack prefs (httpx not requests, DuckDB, LadybugDB, SvelteKit/pnpm)
+- [Generic tool scope](project_scope_generic_tool.md) — AOI by zip/city/county/state; Worcester is only the example profile
+- [Cook's & Smith ponds](project_cooks_smith_ponds.md) — two adjacent ponds, dam MA00123 between them, one managing group
+- [Priority: sediment/WQ](project_priority_sediment_wq.md) — committee's top question; sequence ahead of freeboard
+- [Session scope](feedback_session_scope.md) — TermTree stays out of hydrology sessions

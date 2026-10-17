@@ -1,0 +1,12 @@
+name: hydrology-flow
+description: Shared project brain
+type: project
+domains:
+  - gharchive
+  - github-project
+  - git-history
+stores:
+  graph: neo4j
+  relational: postgres
+  ephemeral_graph: ladybug
+  ephemeral_relational: duckdb
