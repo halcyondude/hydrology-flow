@@ -1,0 +1,80 @@
+# Reference region profile. Everything site-specific lives here, never in src/.
+# Open questions are tracked in docs/assumptions.md.
+slug: worcester-ma
+display_name: "Worcester County, MA: Cook's Pond and Smith Pond"
+
+aoi:
+  county:
+    - "Worcester County, MA"
+
+focus_sites:
+  - type: dam
+    name: "Cook's Pond Dam"
+    lat: 42.28425
+    lon: -71.85749
+    external_ids:
+      nid: MA00123
+      comid: "6116810"          # NHDPlusV2
+      reachcode: "01090003000173"
+    notes: >-
+      Tatnuck Brook. Dam MA00123 sits between Cook's Pond and Smith Pond.
+      Year completed and last inspection date are unverified (docs/assumptions.md A2).
+
+  - type: pond
+    name: "Cook's Pond"
+    external_ids:
+      massdep_au: MA51027
+    notes: Coordinates to be resolved from NHDPlus HR waterbodies / MassDEP AU geometry.
+
+  - type: pond
+    name: "Smith Pond"
+    # ASSUMPTION: location unresolved, see docs/assumptions.md A1. Adjacent to Cook's Pond
+    # across the dam; which pond is upstream is itself unverified. Resolve from NHDPlus HR
+    # waterbodies and flowlines before using this site for any computation.
+    notes: Location unresolved (A1).
+
+  - type: parcel
+    name: "Donker Farm"
+    address: "48-50 Tory Fort Ln"
+    notes: Address only; geocode against public parcel data at acquire time.
+
+  - type: gauge
+    name: "Tatnuck Brook below Coes Reservoir"
+    external_ids:
+      usgs_site: "01109570"
+    notes: Period of record unverified (docs/assumptions.md A6).
+
+  - type: wq_site
+    name: "MassDEP WQ site W3001"
+    external_ids:
+      massdep_wq_site: W3001
+
+  - type: gauge
+    name: "Worcester airport weather station"
+    external_ids:
+      ghcnd_station: USW00094746
+    # ASSUMPTION: this GHCN-D station id is unverified, see docs/assumptions.md A5.
+    # Confirm against NCEI station metadata before relying on its precipitation record.
+    notes: Weather (not streamflow) station; typed gauge for lack of a better enum value.
+
+viewer:
+  target_sites:
+    - "Cook's Pond"
+    - "Smith Pond"
+    - "Cook's Pond Dam"
+  # Range and orientation are intentionally unset: the viewer frames the targets' extent,
+  # then supports zooming out to the AOI (the county).
+
+private_data:
+  - name: WSU DEEP bathymetry (summer 2025)
+    path: data/private/bathymetry/
+    description: Pond bathymetry for stage-storage curves; both ponds if available.
+  - name: Dam inspection report
+    path: data/private/inspection/
+    description: Internal reference only. Never published.
+  - name: Spillway and outlet drawings
+    path: data/private/drawings/
+    description: Resolves outlet geometry (docs/assumptions.md A4).
+  - name: Turbidity and water-quality monitoring
+    path: data/private/water-quality/
+    description: Committee monitoring data to complement public WQP records.
