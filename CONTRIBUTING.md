@@ -5,7 +5,7 @@
 ```sh
 uv sync            # creates .venv with runtime + dev dependencies
 uv run pytest      # unit tests; network tests are skipped by default
-uv run pytest -m network   # live tests against Census TIGERweb and USGS WBD
+uv run pytest -m network   # live tests against Census TIGERweb and USGS WBD (slow, ~2 min)
 ```
 
 Checks that CI runs, all of which must pass locally first:
@@ -14,19 +14,30 @@ Checks that CI runs, all of which must pass locally first:
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run mypy --strict src tests
-scripts/check_no_geography.sh src
+uv run python scripts/check_no_geography.py src
 uv run pytest
 ```
 
 ## Rule 1: geography is data, not code
 
 `src/` must not contain latitudes, longitudes, COMIDs, station ids, FIPS codes, NID ids or place
-names. Site-specific values live in `profiles/<slug>/profile.yaml`. CI runs
-`scripts/check_no_geography.sh`, which fails on decimal literals with four or more decimal places
-(`-?[0-9]{1,3}\.[0-9]{4,}`) and on the known reference-site ids. If you need a tiny tolerance
-written as a decimal, use scientific notation (`5e-4`) and a named constant.
+names. Site-specific values live in `profiles/<slug>/profile.yaml`.
 
-CLI help and docstrings use placeholders (`12345`, `Alpha County, ST`), not real places. Real
+CI runs `scripts/check_no_geography.py`, an AST-based checker over every file under `src/`
+(`.py` by AST; yaml/json/toml as text). It flags:
+
+- `coord`: floats with 2+ decimals bound to names like `lat`, `lon`, `x`, `y`, `coord`, or two or
+  more coordinate-range floats together in a tuple, list or call. Lone physical constants such as
+  `9.80665` or `0.2083` pass.
+- `separator`: `_` digit separators inside a decimal (`42.284_25`).
+- `id`: int/str ids (5+ digits, or letters plus 4+ digits) bound to names containing comid, nid,
+  huc, site, station, fips, reachcode, geoid, gauge and similar.
+- `nid`: any string holding a NID-style id (two letters plus five digits), any case.
+- `place`: strings naming a US place with its state, or a US state name.
+
+For a neutral placeholder that the checker cannot tell from real data, add
+`# geo-ok: <reason>` to the statement. A reason is required. Never use it for real site data.
+CLI help and docstrings use placeholders (`12345`, `Alpha County, ST`), not real places; real
 examples go in the README.
 
 ## Rule 2: every assumption is marked and bounded
@@ -68,7 +79,7 @@ to `AOIResolver`. Public-domain sources only.
 - Every new module ships with tests. Mock HTTP with `respx`.
 - Mark anything that touches a live service with `@pytest.mark.network`; CI skips those.
 - Test the behavior of the guard by planting a literal in a temp directory (see
-  `tests/test_cli.py`), never in `src/`.
+  `tests/test_geography_guard.py`), never in `src/`.
 
 ## Commits and PRs
 

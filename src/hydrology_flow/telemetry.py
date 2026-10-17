@@ -1,8 +1,8 @@
 """OpenTelemetry wiring: traces, metrics and logs.
 
-Console exporters (to stderr, so stdout stays clean for CLI results) are the default.
-OTLP/HTTP is used when ``HFLOW_OTLP_ENDPOINT`` is set. ``HFLOW_TELEMETRY_EXPORTER=none``
-disables export while keeping the API calls as no-ops.
+Console exporters write to stderr so stdout stays clean for CLI results.
+Telemetry is off by default. Opt in with ``--telemetry console|otlp`` or
+``HFLOW_TELEMETRY_EXPORTER``; setting ``HFLOW_OTLP_ENDPOINT`` implies OTLP over gRPC.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from typing import IO
 
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
-from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import (
     BatchLogRecordProcessor,
@@ -80,11 +80,11 @@ def _exporters(
     settings: Settings, out: IO[str]
 ) -> tuple[SpanExporter, MetricExporter, LogRecordExporter]:
     if settings.resolved_exporter == "otlp":
-        base = (settings.otlp_endpoint or "").rstrip("/")
+        endpoint = settings.otlp_endpoint
         return (
-            OTLPSpanExporter(endpoint=f"{base}/v1/traces"),
-            OTLPMetricExporter(endpoint=f"{base}/v1/metrics"),
-            OTLPLogExporter(endpoint=f"{base}/v1/logs"),
+            OTLPSpanExporter(endpoint=endpoint),
+            OTLPMetricExporter(endpoint=endpoint),
+            OTLPLogExporter(endpoint=endpoint),
         )
     return (
         ConsoleSpanExporter(out=out, formatter=_compact_span),

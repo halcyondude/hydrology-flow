@@ -18,6 +18,7 @@ import hashlib
 import json
 import random
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -43,6 +44,10 @@ USER_AGENT = "hydrology-flow/0.1 (+https://github.com/halcyondude/hydrology-flow
 # Headers that describe the stored (already decoded) body and must not be replayed verbatim.
 _DROPPED_HEADERS = frozenset({"content-encoding", "content-length", "transfer-encoding"})
 
+# ArcGIS reports failures as HTTP 200 with {"error": {"code": N, ...}}.
+_ERROR_MARKER = b'"error"'
+HTTP_ERROR_CODE_PERMANENT_MAX = 499
+
 Sleep = Callable[[float], Awaitable[None]]
 Clock = Callable[[], float]
 
@@ -51,6 +56,33 @@ def is_retryable_status(status: int) -> bool:
     return status == HTTP_TOO_MANY_REQUESTS or (
         HTTP_SERVER_ERROR_MIN <= status <= HTTP_SERVER_ERROR_MAX and status != HTTP_NOT_IMPLEMENTED
     )
+
+
+def arcgis_error_code(response: httpx.Response) -> int | None:
+    """Code of an ArcGIS-style ``{"error": {...}}`` body served with HTTP 200, else None.
+
+    Returns 0 when the body is an error with no usable code.
+    """
+    if response.status_code != HTTP_OK or _ERROR_MARKER not in response.content[:4096]:
+        return None
+    return _error_code_from_body(response.content)
+
+
+def _error_code_from_body(body: bytes) -> int | None:
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict) or "error" not in payload:
+        return None
+    err = payload["error"]
+    code = err.get("code") if isinstance(err, dict) else None
+    return int(code) if isinstance(code, int) else 0
+
+
+def is_transient_arcgis_error(code: int | None) -> bool:
+    """Server-side (5xx or unknown) ArcGIS errors are worth retrying; 4xx are the caller's fault."""
+    return code is not None and (code == 0 or code > HTTP_ERROR_CODE_PERMANENT_MAX)
 
 
 def parse_retry_after(value: str | None, *, now: datetime | None = None) -> float | None:
@@ -121,7 +153,17 @@ class RateLimitTransport(httpx.AsyncBaseTransport):
         self._clock = clock
         self._sleep = sleep
         self._buckets: dict[str, TokenBucket] = {}
+        self._paused_until: dict[str, float] = {}
         self._semaphore = asyncio.Semaphore(concurrency)
+
+    def pause_host(self, host: str, seconds: float) -> None:
+        """Hold every request to ``host`` for ``seconds`` (server said slow down)."""
+        until = self._clock() + seconds
+        self._paused_until[host] = max(self._paused_until.get(host, 0.0), until)
+
+    async def _wait_unpaused(self, host: str) -> None:
+        while (remaining := self._paused_until.get(host, 0.0) - self._clock()) > 0:
+            await self._sleep(remaining)
 
     def bucket(self, host: str) -> TokenBucket:
         if host not in self._buckets:
@@ -131,7 +173,9 @@ class RateLimitTransport(httpx.AsyncBaseTransport):
         return self._buckets[host]
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        await self.bucket(request.url.host).acquire()
+        host = request.url.host
+        await self._wait_unpaused(host)
+        await self.bucket(host).acquire()
         async with self._semaphore:
             response = await self._inner.handle_async_request(request)
             await response.aread()
@@ -159,7 +203,9 @@ class RetryTransport(httpx.AsyncBaseTransport):
         retry_after_max_s: float,
         sleep: Sleep = asyncio.sleep,
         rng: random.Random | None = None,
+        on_retry_after: Callable[[str, float], None] | None = None,
     ) -> None:
+        self._on_retry_after = on_retry_after
         self._inner = inner
         self._max_retries = max_retries
         self._base = backoff_base_s
@@ -184,14 +230,22 @@ class RetryTransport(httpx.AsyncBaseTransport):
                 delay = self.backoff(attempt)
                 reason = type(exc).__name__
             else:
-                if not is_retryable_status(response.status_code) or attempt >= self._max_retries:
+                err_code = arcgis_error_code(response)
+                retryable = is_retryable_status(response.status_code) or is_transient_arcgis_error(
+                    err_code
+                )
+                if not retryable or attempt >= self._max_retries:
                     response.extensions[ATTEMPTS_EXT_KEY] = attempt + 1
                     return response
                 delay = self.backoff(attempt)
                 retry_after = parse_retry_after(response.headers.get("retry-after"))
                 if retry_after is not None:
                     delay = max(delay, min(retry_after, self._retry_after_max))
-                reason = str(response.status_code)
+                    if self._on_retry_after is not None:
+                        self._on_retry_after(request.url.host, delay)
+                reason = (
+                    str(response.status_code) if err_code is None else f"arcgis-error-{err_code}"
+                )
                 await response.aclose()
             log.warning(
                 "http retry",
@@ -235,9 +289,12 @@ class CachingTransport(httpx.AsyncBaseTransport):
         meta_path, body_path = self._paths(key)
         try:
             meta = json.loads(meta_path.read_text())
-            return int(meta["status"]), [tuple(h) for h in meta["headers"]], body_path.read_bytes()
+            body = body_path.read_bytes()
         except (OSError, ValueError, KeyError):
             return None
+        if _ERROR_MARKER in body[:4096] and _error_code_from_body(body) is not None:
+            return None  # entry poisoned by an older version; treat as a miss
+        return int(meta["status"]), [tuple(h) for h in meta["headers"]], body
 
     def _write(self, key: str, response: httpx.Response) -> None:
         meta_path, body_path = self._paths(key)
@@ -246,8 +303,9 @@ class CachingTransport(httpx.AsyncBaseTransport):
             [k, v] for k, v in response.headers.multi_items() if k.lower() not in _DROPPED_HEADERS
         ]
         # Write body first and the meta file last (via rename) so a reader never sees a torn entry.
-        tmp_body = body_path.with_suffix(".body.tmp")
-        tmp_meta = meta_path.with_suffix(".json.tmp")
+        token = uuid.uuid4().hex
+        tmp_body = body_path.with_suffix(f".{token}.body.tmp")
+        tmp_meta = meta_path.with_suffix(f".{token}.json.tmp")
         tmp_body.write_bytes(response.content)
         tmp_meta.write_text(json.dumps({"status": response.status_code, "headers": headers}))
         tmp_body.replace(body_path)
@@ -270,7 +328,7 @@ class CachingTransport(httpx.AsyncBaseTransport):
         response = await self._inner.handle_async_request(request)
         await response.aread()
         response.extensions[CACHE_EXT_KEY] = "miss"
-        if response.status_code == HTTP_OK:
+        if response.status_code == HTTP_OK and arcgis_error_code(response) is None:
             await asyncio.to_thread(self._write, key, response)
         return response
 
@@ -373,6 +431,7 @@ def build_transport(
         retry_after_max_s=settings.http_retry_after_max_s,
         sleep=sleep,
         rng=rng,
+        on_retry_after=limited.pause_host,
     )
     cached = CachingTransport(
         retrying, settings.http_cache_dir, enabled=settings.http_cache_enabled

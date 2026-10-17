@@ -21,15 +21,22 @@ URL = "https://example.test/data"
 
 
 class Sleeper:
+    """Records sleeps and advances a fake clock, so pauses expire without real waiting."""
+
     def __init__(self) -> None:
         self.delays: list[float] = []
+        self.now = 1000.0
+
+    def clock(self) -> float:
+        return self.now
 
     async def __call__(self, delay: float) -> None:
         self.delays.append(delay)
+        self.now += delay
 
 
 def client_for(settings: Settings, sleeper: Sleeper) -> httpx.AsyncClient:
-    transport = build_transport(settings, sleep=sleeper, rng=random.Random(1))
+    transport = build_transport(settings, sleep=sleeper, clock=sleeper.clock, rng=random.Random(1))
     return httpx.AsyncClient(transport=transport)
 
 

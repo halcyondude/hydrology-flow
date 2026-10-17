@@ -287,7 +287,7 @@ async def test_wbd_covering_paginates_and_dedupes() -> None:
         ]
     )
     async with httpx.AsyncClient() as client:
-        units = await wbd(client).covering(box(0, 0, 1, 1))
+        units = (await wbd(client).covering(box(0, 0, 1, 1), 0.0)).units
     assert [u.huc12 for u in units] == ["000000000001", "000000000002", "000000000003"]
     assert route.call_count == 2
     body = route.calls[0].request.content.decode()

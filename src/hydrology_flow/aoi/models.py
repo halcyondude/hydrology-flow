@@ -147,6 +147,10 @@ class AOI(BaseModel):
     area_sqkm: float
     sources: list[SourceBoundary]
     huc12: list[HucUnit]
+    huc12_dropped: int = Field(
+        default=0, description="HUC12s intersecting the AOI but below the overlap threshold"
+    )
+    huc_min_overlap_fraction: float = 0.0
 
     @property
     def shape(self) -> BaseGeometry:
@@ -167,6 +171,8 @@ class AOI(BaseModel):
                 "area_sqkm": self.area_sqkm,
                 "sources": [s.model_dump() for s in self.sources],
                 "huc12_count": len(self.huc12),
+                "huc12_dropped_below_overlap": self.huc12_dropped,
+                "huc_min_overlap_fraction": self.huc_min_overlap_fraction,
                 "huc12": [h.model_dump() for h in self.huc12],
             },
         }

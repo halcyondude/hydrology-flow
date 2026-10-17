@@ -8,7 +8,7 @@ from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 
 from hydrology_flow.aoi.models import AOISpec, HucUnit, SourceBoundary
-from hydrology_flow.aoi.providers import Boundary
+from hydrology_flow.aoi.providers import Boundary, HucCover
 from hydrology_flow.config import Settings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -47,9 +47,9 @@ class FakeHucs:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def covering(self, geometry: BaseGeometry) -> list[HucUnit]:
+    async def covering(self, geometry: BaseGeometry, min_overlap_fraction: float) -> HucCover:
         self.calls += 1
-        return [make_unit("010100000101"), make_unit("010100000102")]
+        return HucCover([make_unit("010100000101"), make_unit("010100000102")])
 
     async def boundaries(self, codes: Sequence[str]) -> list[Boundary]:
         return [

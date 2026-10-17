@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SOURCES_PATH = Path("data/sources.yaml")
+from hydrology_flow.config import get_settings
 
 
 class DataSource(BaseModel):
@@ -39,5 +39,6 @@ class SourceRegister(BaseModel):
         return self
 
 
-def load_sources(path: Path = SOURCES_PATH) -> SourceRegister:
+def load_sources(path: Path | None = None) -> SourceRegister:
+    path = path or get_settings().sources_path
     return SourceRegister.model_validate(yaml.safe_load(path.read_text()))

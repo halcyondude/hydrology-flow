@@ -54,8 +54,9 @@ Design points:
 - **Public-domain sources only.** Census TIGER/Line (via TIGERweb) and USGS WBD. Provenance is
   tracked in [`data/sources.yaml`](data/sources.yaml).
 - **Pluggable providers.** `BoundaryProvider` and `HucProvider` are `Protocol` classes.
-- **Observable.** One OpenTelemetry span, log line and metric per HTTP request. Console exporters
-  by default (stderr); OTLP when `HFLOW_OTLP_ENDPOINT` is set.
+- **Observable, opt in.** One OpenTelemetry span, log line and metric per HTTP request. Off by
+  default; `--telemetry console` prints to stderr, `--telemetry otlp` (or setting
+  `HFLOW_OTLP_ENDPOINT`) exports over OTLP/gRPC.
 
 ## Quickstart
 
@@ -74,7 +75,7 @@ uv run hflow aoi --zip 01602
 uv run hflow aoi --zip 01602
 
 # A city (Census place)
-uv run hflow aoi --place "Worcester, MA"
+uv run hflow aoi --place "Boulder, CO"
 
 # One county, or several (their union is the AOI)
 uv run hflow aoi --county "Worcester County, MA"
@@ -98,8 +99,11 @@ uv run hflow aoi --profile worcester-ma
 
 The selectors are mutually exclusive, except that `--county` may be repeated. `--out FILE` writes a
 GeoJSON Feature (EPSG:4326) whose properties carry the recommended projected CRS, source boundaries
-and the full HUC12 list. Results are cached by content hash under `.cache/hflow/`
-(`HFLOW_CACHE_DIR` to move it; `--no-cache` to bypass the AOI cache).
+and the full HUC12 list. HUC12s that overlap the AOI by less than 1% of their own area are
+dropped and counted (`huc_min_overlap_fraction`, an `# ASSUMPTION:` with range 0 to 0.05). Results
+are cached by content hash under `<repo>/.cache/hflow/`. Paths resolve from the repo root, not the
+working directory; set `HFLOW_HOME` or `HFLOW_CACHE_DIR` to move them, and use `--no-cache` to
+bypass the AOI cache.
 
 ## Region profiles
 
@@ -111,8 +115,8 @@ are left unset and marked with `# ASSUMPTION:`; see
 
 ## Configuration
 
-Environment variables (or `.env`), prefix `HFLOW_`: `CACHE_DIR`, `DATA_DIR`, `OTLP_ENDPOINT`,
-`TELEMETRY_EXPORTER` (`console|otlp|none`), `HTTP_CONCURRENCY`, `HTTP_RATE_PER_SECOND`,
+Environment variables (or `.env`), prefix `HFLOW_`: `HOME`, `CACHE_DIR`, `DATA_DIR`, `OTLP_ENDPOINT`,
+`TELEMETRY_EXPORTER` (`console|otlp|none`, default none), `HTTP_CONCURRENCY`, `HTTP_RATE_PER_SECOND`,
 `HTTP_BURST`, `HTTP_MAX_RETRIES`, `LOG_LEVEL`. Defaults and the assumptions behind them are in
 [`src/hydrology_flow/config.py`](src/hydrology_flow/config.py).
 

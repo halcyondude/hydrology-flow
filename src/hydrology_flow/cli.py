@@ -14,6 +14,7 @@ import httpx
 
 from hydrology_flow import __version__
 from hydrology_flow.aoi import AOI, AOISpec, default_resolver
+from hydrology_flow.aoi.arcgis import ArcGISError
 from hydrology_flow.aoi.tigerweb import BoundaryNotFoundError
 from hydrology_flow.config import Settings, get_settings
 from hydrology_flow.http import create_client
@@ -60,7 +61,9 @@ def add_aoi_flags(parser: argparse.ArgumentParser, *, required: bool) -> None:
     ).add_mutually_exclusive_group(required=required)
     group.add_argument("--profile", metavar="SLUG", help="region profile slug (profiles/<slug>/)")
     group.add_argument("--zip", metavar="ZIP", help="5-digit ZIP (Census ZCTA)")
-    group.add_argument("--place", metavar="'CITY, ST'", help="Census place, e.g. 'Worcester, MA'")
+    group.add_argument(
+        "--place", metavar="'CITY, ST'", help="Census place, e.g. 'Exampleville, ST'"
+    )
     group.add_argument(
         "--county",
         metavar="'NAME COUNTY, ST'",
@@ -107,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--telemetry",
         choices=("console", "otlp", "none"),
-        help="telemetry exporter (default: otlp if HFLOW_OTLP_ENDPOINT is set, else console)",
+        help="opt in to telemetry export (default: none; otlp if HFLOW_OTLP_ENDPOINT is set)",
     )
     sub = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
 
@@ -146,7 +149,12 @@ def format_summary(aoi: AOI) -> str:
         f"  projected CRS:  {aoi.projected_crs}",
         "  sources:",
         *(f"    - {s.kind} {s.source_id} {s.name} ({s.source})" for s in aoi.sources),
-        f"  HUC12 count:    {len(aoi.huc12)}",
+        f"  HUC12 count:    {len(aoi.huc12)}"
+        + (
+            f"  (dropped {aoi.huc12_dropped} with < {aoi.huc_min_overlap_fraction:.0%} overlap)"
+            if aoi.huc_min_overlap_fraction
+            else ""
+        ),
     ]
     per_huc8 = Counter(h.huc12[:HUC8_DIGITS] for h in aoi.huc12)
     lines.append(
@@ -195,6 +203,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(run_aoi(args, settings))
     except (ValueError, ProfileNotFoundError, BoundaryNotFoundError, LookupError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except ArcGISError as exc:
+        print(f"error: the data service reported a failure: {exc}", file=sys.stderr)
         return EXIT_ERROR
     except httpx.HTTPError as exc:
         print(f"error: network request failed: {exc!r}", file=sys.stderr)

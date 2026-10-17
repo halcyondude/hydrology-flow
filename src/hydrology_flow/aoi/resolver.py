@@ -5,27 +5,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pyproj import Geod
 from shapely import to_geojson
 from shapely.geometry import box
-from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from hydrology_flow.aoi.crs import recommend_projected_crs
+from hydrology_flow.aoi.geometry import close_gaps, geodesic_area_sqkm
 from hydrology_flow.aoi.models import AOI, AOISpec, HucUnit, SourceBoundary
 from hydrology_flow.aoi.providers import Boundary, BoundaryProvider, HucProvider
 from hydrology_flow.telemetry import get_logger, get_tracer
 
 log = get_logger("aoi")
-SQM_PER_SQKM = 1_000_000.0
 # Bump when resolution logic changes so stale cache entries are ignored.
-RESOLVER_VERSION = "1"
-_GEOD = Geod(ellps="WGS84")
-
-
-def geodesic_area_sqkm(geometry: BaseGeometry) -> float:
-    area_m2, _ = _GEOD.geometry_area_perimeter(geometry)
-    return abs(float(area_m2)) / SQM_PER_SQKM
+RESOLVER_VERSION = "2"
 
 
 class AOIResolver:
@@ -36,7 +28,11 @@ class AOIResolver:
         *,
         cache_dir: Path | None = None,
         cache_salt: tuple[str, ...] = (),
+        min_overlap_fraction: float = 0.0,
+        gap_close_deg: float = 0.0,
     ) -> None:
+        self._min_overlap = min_overlap_fraction
+        self._gap_close = gap_close_deg
         self._boundaries = boundaries
         self._hucs = hucs
         self._cache_dir = cache_dir
@@ -71,6 +67,7 @@ class AOIResolver:
     async def _resolve(self, spec: AOISpec) -> AOI:
         boundaries: list[Boundary]
         units: list[HucUnit] | None = None
+        dropped = 0
         if spec.kind == "bbox":
             assert spec.bbox is not None  # guaranteed by AOISpec.kind
             west, south, east, north = spec.bbox
@@ -93,8 +90,11 @@ class AOIResolver:
             boundaries = await self._boundaries.resolve(spec)
 
         geometry = unary_union([b.geometry for b in boundaries])
+        if len(boundaries) > 1:
+            geometry = close_gaps(geometry, self._gap_close)
         if units is None:
-            units = await self._hucs.covering(geometry)
+            cover = await self._hucs.covering(geometry, self._min_overlap)
+            units, dropped = cover.units, cover.dropped
         name = _name(spec, boundaries)
         return AOI(
             name=name,
@@ -105,6 +105,8 @@ class AOIResolver:
             area_sqkm=round(geodesic_area_sqkm(geometry), 3),
             sources=[b.source for b in boundaries],
             huc12=units,
+            huc12_dropped=dropped,
+            huc_min_overlap_fraction=self._min_overlap if spec.kind != "huc" else 0.0,
         )
 
 

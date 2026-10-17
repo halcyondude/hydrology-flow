@@ -35,37 +35,38 @@ AOI_ID_LEN = 16
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chunks (
-    aoi_id VARCHAR NOT NULL,
+    plan_id VARCHAR NOT NULL,
     chunk VARCHAR NOT NULL,
     stage VARCHAR NOT NULL,
     status VARCHAR NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     error VARCHAR,
     artifact VARCHAR,
-    PRIMARY KEY (aoi_id, chunk, stage)
+    PRIMARY KEY (plan_id, chunk, stage)
 )
 """
 
 
 @dataclass(frozen=True)
 class Chunk:
-    aoi_id: str
+    plan_id: str
     code: str  # HUC code at the planned chunk level
     huc12: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class TilePlan:
-    aoi_id: str
+    plan_id: str
     aoi_name: str
     chunk_digits: int
     stages: tuple[str, ...]
     chunks: tuple[Chunk, ...]
 
 
-def aoi_id(aoi: AOI) -> str:
-    """Stable id from the AOI's covering HUC12 set (same cover => same work)."""
-    digest = hashlib.sha256(",".join(sorted(aoi.huc12_codes)).encode()).hexdigest()
+def plan_id(aoi: AOI, chunk_digits: int = HUC12_DIGITS) -> str:
+    """Stable id from the covering HUC12 set and the chunk level (same cover + level => same work)."""
+    key = f"{chunk_digits}:" + ",".join(sorted(aoi.huc12_codes))
+    digest = hashlib.sha256(key.encode()).hexdigest()
     return digest[:AOI_ID_LEN]
 
 
@@ -83,7 +84,7 @@ def plan_chunks(
     groups: dict[str, list[str]] = {}
     for code in sorted(aoi.huc12_codes):
         groups.setdefault(code[:chunk_digits], []).append(code)
-    ident = aoi_id(aoi)
+    ident = plan_id(aoi, chunk_digits)
     chunks = tuple(Chunk(ident, k, tuple(v)) for k, v in sorted(groups.items()))
     return TilePlan(ident, aoi.name, chunk_digits, tuple(stages), chunks)
 
@@ -112,21 +113,20 @@ class Manifest:
         self.close()
 
     def register(self, plan: TilePlan) -> int:
-        """Insert missing rows as ``pending``. Returns how many rows were new."""
-        now = datetime.now(UTC)
-        before = self.count(plan.aoi_id)
-        rows = [
-            (c.aoi_id, c.code, stage, "pending", now) for c in plan.chunks for stage in plan.stages
-        ]
-        self._con.executemany(
-            "INSERT INTO chunks (aoi_id, chunk, stage, status, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-            rows,
+        """Insert missing rows as ``pending`` in one statement. Returns how many were new."""
+        before = self.count(plan.plan_id)
+        self._con.execute(
+            "INSERT INTO chunks (plan_id, chunk, stage, status, updated_at) "
+            "SELECT ?, c.chunk, s.stage, 'pending', ? "
+            "FROM (SELECT unnest(?::VARCHAR[]) AS chunk) c "
+            "CROSS JOIN (SELECT unnest(?::VARCHAR[]) AS stage) s "
+            "ON CONFLICT DO NOTHING",
+            [plan.plan_id, datetime.now(UTC), [c.code for c in plan.chunks], list(plan.stages)],
         )
-        return self.count(plan.aoi_id) - before
+        return self.count(plan.plan_id) - before
 
     def count(self, aoi: str) -> int:
-        row = self._con.execute("SELECT count(*) FROM chunks WHERE aoi_id = ?", [aoi]).fetchone()
+        row = self._con.execute("SELECT count(*) FROM chunks WHERE plan_id = ?", [aoi]).fetchone()
         return int(row[0]) if row else 0
 
     def set_status(
@@ -141,7 +141,7 @@ class Manifest:
     ) -> None:
         updated = self._con.execute(
             "UPDATE chunks SET status = ?, updated_at = ?, error = ?, "
-            "artifact = coalesce(?, artifact) WHERE aoi_id = ? AND chunk = ? AND stage = ? "
+            "artifact = coalesce(?, artifact) WHERE plan_id = ? AND chunk = ? AND stage = ? "
             "RETURNING 1",
             [status, datetime.now(UTC), error, artifact, aoi, chunk, stage],
         ).fetchall()
@@ -150,7 +150,7 @@ class Manifest:
 
     def status(self, aoi: str, chunk: str, stage: str) -> Status:
         row = self._con.execute(
-            "SELECT status FROM chunks WHERE aoi_id = ? AND chunk = ? AND stage = ?",
+            "SELECT status FROM chunks WHERE plan_id = ? AND chunk = ? AND stage = ?",
             [aoi, chunk, stage],
         ).fetchone()
         if row is None:
@@ -161,31 +161,33 @@ class Manifest:
         """Return ``running`` rows (from a crashed run) to ``pending``."""
         rows = self._con.execute(
             "UPDATE chunks SET status = 'pending', updated_at = ? "
-            "WHERE aoi_id = ? AND status = 'running' RETURNING 1",
+            "WHERE plan_id = ? AND status = 'running' RETURNING 1",
             [datetime.now(UTC), aoi],
         ).fetchall()
         return len(rows)
 
     def runnable(self, plan: TilePlan, stage: str, *, retry_failed: bool = False) -> list[str]:
         """Chunks ready to run ``stage``: the stage is pending (or failed, if asked) and every
-        earlier stage in the plan is ``done`` for that chunk."""
+        earlier stage in the plan is ``done`` for that chunk. One query, any plan size."""
         if stage not in plan.stages:
             raise ValueError(f"stage {stage!r} not in plan")
-        earlier = plan.stages[: plan.stages.index(stage)]
-        wanted = ("pending", "failed") if retry_failed else ("pending",)
-        out: list[str] = []
-        for chunk in plan.chunks:
-            if self.status(plan.aoi_id, chunk.code, stage) not in wanted:
-                continue
-            if all(self.status(plan.aoi_id, chunk.code, s) == "done" for s in earlier):
-                out.append(chunk.code)
-        return out
+        earlier = list(plan.stages[: plan.stages.index(stage)])
+        wanted = ["pending", "failed"] if retry_failed else ["pending"]
+        rows = self._con.execute(
+            "SELECT c.chunk FROM chunks c "
+            "WHERE c.plan_id = ? AND c.stage = ? AND list_contains(?, c.status) "
+            "AND NOT EXISTS (SELECT 1 FROM chunks e WHERE e.plan_id = c.plan_id "
+            "AND e.chunk = c.chunk AND list_contains(?, e.stage) AND e.status <> 'done') "
+            "ORDER BY c.chunk",
+            [plan.plan_id, stage, wanted, earlier],
+        ).fetchall()
+        return [r[0] for r in rows]
 
     def summary(self, aoi: str) -> dict[str, dict[str, int]]:
         """``{stage: {status: count}}`` for one AOI, including zero counts."""
         out: dict[str, dict[str, int]] = {s: dict.fromkeys(STATUSES, 0) for s in STAGES}
         for stage, status, n in self._con.execute(
-            "SELECT stage, status, count(*) FROM chunks WHERE aoi_id = ? GROUP BY ALL", [aoi]
+            "SELECT stage, status, count(*) FROM chunks WHERE plan_id = ? GROUP BY ALL", [aoi]
         ).fetchall():
             out[stage][status] = int(n)
         return {s: c for s, c in out.items() if any(c.values())}

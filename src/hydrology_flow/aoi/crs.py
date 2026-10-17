@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from shapely.geometry.base import BaseGeometry
 
+from hydrology_flow.aoi.geometry import lon_extent, normalize_lon
+
 UTM_ZONE_WIDTH_DEG = 6.0
 UTM_ZONE_COUNT = 60
 LON_ORIGIN = -180.0
@@ -22,10 +24,11 @@ def recommend_projected_crs(geometry: BaseGeometry) -> str:
     multi-state AOIs) get a local Lambert azimuthal equal-area PROJ string centred on the
     extent, which keeps areas true over any size.
     """
-    west, south, east, north = geometry.bounds
-    centre_lon = (west + east) / 2
+    _, south, _, north = geometry.bounds
+    west, east = lon_extent(geometry)  # east may exceed 180 across the antimeridian
+    centre_lon = normalize_lon((west + east) / 2)
     centre_lat = (south + north) / 2
-    if _utm_zone(west) == _utm_zone(east):
+    if _utm_zone(normalize_lon(west)) == _utm_zone(normalize_lon(east)):
         base = EPSG_UTM_NORTH if centre_lat >= 0 else EPSG_UTM_SOUTH
         return f"EPSG:{base + _utm_zone(centre_lon)}"
     return (

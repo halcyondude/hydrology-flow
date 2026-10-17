@@ -19,6 +19,14 @@ class Boundary:
     geometry: BaseGeometry
 
 
+@dataclass(frozen=True)
+class HucCover:
+    """HUC12s covering an AOI, plus how many intersecting units fell below the overlap bar."""
+
+    units: list[HucUnit]
+    dropped: int = 0
+
+
 @runtime_checkable
 class BoundaryProvider(Protocol):
     """Turns a political-boundary selector (zip, place, county, state) into polygons."""
@@ -30,8 +38,9 @@ class BoundaryProvider(Protocol):
 class HucProvider(Protocol):
     """Hydrologic-unit lookups. Implementations must return HUC12s sorted by code."""
 
-    async def covering(self, geometry: BaseGeometry) -> list[HucUnit]:
-        """All HUC12s intersecting ``geometry`` (EPSG:4326)."""
+    async def covering(self, geometry: BaseGeometry, min_overlap_fraction: float) -> HucCover:
+        """HUC12s intersecting ``geometry`` (EPSG:4326) whose area overlaps it by at least
+        ``min_overlap_fraction`` (0 keeps every intersecting unit)."""
         ...
 
     async def boundaries(self, codes: Sequence[str]) -> list[Boundary]:

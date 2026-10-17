@@ -5,11 +5,11 @@ from __future__ import annotations
 import httpx
 
 from hydrology_flow.aoi.models import AOI, AOISpec, HucUnit, SourceBoundary
-from hydrology_flow.aoi.providers import Boundary, BoundaryProvider, HucProvider
+from hydrology_flow.aoi.providers import Boundary, BoundaryProvider, HucCover, HucProvider
 from hydrology_flow.aoi.resolver import AOIResolver
 from hydrology_flow.aoi.tigerweb import TigerwebBoundaryProvider
 from hydrology_flow.aoi.wbd import WbdProvider
-from hydrology_flow.config import Settings
+from hydrology_flow.config import GAP_CLOSE_FACTOR, Settings
 
 
 def default_resolver(client: httpx.AsyncClient, settings: Settings) -> AOIResolver:
@@ -25,7 +25,13 @@ def default_resolver(client: httpx.AsyncClient, settings: Settings) -> AOIResolv
             page_size=settings.arcgis_page_size,
         ),
         cache_dir=settings.aoi_cache_dir,
-        cache_salt=(str(settings.aoi_simplify_deg), str(settings.huc_query_simplify_deg)),
+        cache_salt=(
+            str(settings.aoi_simplify_deg),
+            str(settings.huc_query_simplify_deg),
+            str(settings.huc_min_overlap_fraction),
+        ),
+        min_overlap_fraction=settings.huc_min_overlap_fraction,
+        gap_close_deg=GAP_CLOSE_FACTOR * settings.aoi_simplify_deg,
     )
 
 
@@ -35,6 +41,7 @@ __all__ = [
     "AOISpec",
     "Boundary",
     "BoundaryProvider",
+    "HucCover",
     "HucProvider",
     "HucUnit",
     "SourceBoundary",

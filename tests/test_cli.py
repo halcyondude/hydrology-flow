@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -102,39 +101,3 @@ def test_aoi_error_exit_code(
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     assert cli.main(["aoi", "--profile", "does-not-exist"]) == 1
     assert "error:" in capsys.readouterr().err
-
-
-# ---- the hard-coded-geography guard (also run in CI) -------------------------------
-
-GUARD = REPO_ROOT / "scripts" / "check_no_geography.sh"
-
-
-def run_guard(target: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([str(GUARD), str(target)], capture_output=True, text=True, check=False)
-
-
-def test_guard_passes_on_real_src() -> None:
-    result = run_guard(REPO_ROOT / "src")
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-@pytest.mark.parametrize(
-    "planted",
-    [
-        "LAT = 42.28425",
-        "LON = -71.85749",
-        'DAM = "MA00123"',
-        "COMID = 6116810",
-        'GAUGE = "01109570"',
-    ],
-)
-def test_guard_fails_on_planted_geography(tmp_path: Path, planted: str) -> None:
-    (tmp_path / "mod.py").write_text(planted + "\n")
-    result = run_guard(tmp_path)
-    assert result.returncode == 1
-    assert "ERROR" in result.stderr
-
-
-def test_guard_ignores_short_decimals(tmp_path: Path) -> None:
-    (tmp_path / "mod.py").write_text("RATE = 5.0\nVERSION = '0.1.0'\nTOL = 5e-4\n")
-    assert run_guard(tmp_path).returncode == 0

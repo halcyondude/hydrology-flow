@@ -6,7 +6,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from hydrology_flow.aoi import AOIResolver, AOISpec
+from hydrology_flow.aoi import AOIResolver, AOISpec, HucCover
 from hydrology_flow.profiles import (
     PrivateDataPointer,
     Profile,
@@ -15,7 +15,7 @@ from hydrology_flow.profiles import (
     load_profile,
 )
 from hydrology_flow.sources import SourceRegister, load_sources
-from hydrology_flow.tiling import STAGES, Manifest, aoi_id, plan_chunks
+from hydrology_flow.tiling import STAGES, Manifest, plan_chunks, plan_id
 from tests.conftest import REPO_ROOT, FakeBoundaries, FakeHucs, make_unit
 
 PROFILES = REPO_ROOT / "profiles"
@@ -116,8 +116,8 @@ def test_sources_reject_duplicates() -> None:
 
 async def _aoi(codes: list[str]):  # type: ignore[no-untyped-def]
     class Hucs(FakeHucs):
-        async def covering(self, geometry):  # type: ignore[no-untyped-def]
-            return [make_unit(c) for c in codes]
+        async def covering(self, geometry, min_overlap_fraction):  # type: ignore[no-untyped-def]
+            return HucCover([make_unit(c) for c in codes])
 
     return await AOIResolver(FakeBoundaries(), Hucs()).resolve(AOISpec(state="ST"))
 
@@ -135,11 +135,11 @@ async def test_plan_groups_by_chunk_level() -> None:
         plan_chunks(aoi, stages=["nope"])
 
 
-async def test_aoi_id_depends_only_on_cover() -> None:
+async def test_plan_id_depends_only_on_cover() -> None:
     a = await _aoi(["010100000101", "010100000102"])
     b = await _aoi(["010100000102", "010100000101"])
     c = await _aoi(["010100000101"])
-    assert aoi_id(a) == aoi_id(b) != aoi_id(c)
+    assert plan_id(a) == plan_id(b) != plan_id(c)
 
 
 async def test_manifest_register_is_idempotent_and_resumable(tmp_path: Path) -> None:
@@ -148,19 +148,19 @@ async def test_manifest_register_is_idempotent_and_resumable(tmp_path: Path) -> 
     path = tmp_path / "m.duckdb"
     with Manifest(path) as m:
         assert m.register(plan) == 2 * len(STAGES)
-        m.set_status(plan.aoi_id, "010100000101", "acquire", "done", artifact="a.parquet")
-        m.set_status(plan.aoi_id, "010100000102", "acquire", "running")
+        m.set_status(plan.plan_id, "010100000101", "acquire", "done", artifact="a.parquet")
+        m.set_status(plan.plan_id, "010100000102", "acquire", "running")
     with Manifest(path) as m:  # reopen: progress survives, re-register adds nothing
         assert m.register(plan) == 0
-        assert m.status(plan.aoi_id, "010100000101", "acquire") == "done"
+        assert m.status(plan.plan_id, "010100000101", "acquire") == "done"
         assert m.runnable(plan, "acquire") == []  # one done, one running
         assert m.runnable(plan, "condition") == ["010100000101"]  # needs acquire done
-        assert m.reset_interrupted(plan.aoi_id) == 1
+        assert m.reset_interrupted(plan.plan_id) == 1
         assert m.runnable(plan, "acquire") == ["010100000102"]
-        m.set_status(plan.aoi_id, "010100000102", "acquire", "failed", error="boom")
+        m.set_status(plan.plan_id, "010100000102", "acquire", "failed", error="boom")
         assert m.runnable(plan, "acquire") == []
         assert m.runnable(plan, "acquire", retry_failed=True) == ["010100000102"]
-        summary = m.summary(plan.aoi_id)
+        summary = m.summary(plan.plan_id)
         assert summary["acquire"] == {"pending": 0, "running": 0, "done": 1, "failed": 1}
         assert summary["bake"]["pending"] == 2
 

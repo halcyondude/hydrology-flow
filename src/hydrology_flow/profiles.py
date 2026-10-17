@@ -10,8 +10,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hydrology_flow.aoi.models import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN, AOISpec
+from hydrology_flow.config import get_settings
 
-PROFILES_DIRNAME = "profiles"
 PROFILE_FILENAME = "profile.yaml"
 PRIVATE_PREFIX = PurePosixPath("data/private")
 _SLUG = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -115,13 +115,13 @@ class ProfileNotFoundError(LookupError):
     pass
 
 
-def profile_path(slug: str, root: Path = Path(PROFILES_DIRNAME)) -> Path:
+def profile_path(slug: str, root: Path | None = None) -> Path:
     if not _SLUG.match(slug):
         raise ProfileNotFoundError(f"invalid profile slug: {slug!r}")
-    return root / slug / PROFILE_FILENAME
+    return (root or get_settings().profiles_dir) / slug / PROFILE_FILENAME
 
 
-def load_profile(slug_or_path: str | Path, root: Path = Path(PROFILES_DIRNAME)) -> Profile:
+def load_profile(slug_or_path: str | Path, root: Path | None = None) -> Profile:
     """Load by slug (``worcester-ma``) or by explicit YAML path."""
     path = Path(slug_or_path)
     if path.suffix not in {".yaml", ".yml"}:
@@ -131,5 +131,6 @@ def load_profile(slug_or_path: str | Path, root: Path = Path(PROFILES_DIRNAME)) 
     return Profile.model_validate(yaml.safe_load(path.read_text()))
 
 
-def list_profiles(root: Path = Path(PROFILES_DIRNAME)) -> list[str]:
+def list_profiles(root: Path | None = None) -> list[str]:
+    root = root or get_settings().profiles_dir
     return sorted(p.parent.name for p in root.glob(f"*/{PROFILE_FILENAME}"))

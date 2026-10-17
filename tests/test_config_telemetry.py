@@ -18,7 +18,7 @@ def make(**kw: object) -> Settings:
 def test_defaults_are_sane() -> None:
     s = make()
     assert s.http_concurrency >= 1
-    assert s.resolved_exporter == "console"
+    assert s.resolved_exporter == "none"  # telemetry is opt-in
     assert s.http_cache_dir == s.cache_dir / "http"
     assert s.private_data_dir == s.data_dir / "private"
 
