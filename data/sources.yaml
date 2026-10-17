@@ -1,0 +1,36 @@
+# Provenance register for every public dataset the pipeline reads.
+# Validated by hydrology_flow.sources.SourceRegister (see tests/test_sources.py).
+#
+# Entry schema:
+#   id        stable kebab-case id referenced by pipeline stages
+#   name      human-readable dataset name
+#   publisher agency or organization
+#   license   license or public-domain statement
+#   homepage  landing page
+#   access    list of service / download URLs actually used
+#   used_for  what the pipeline uses it for
+#   citation  (optional) preferred citation
+#   notes     (optional) caveats
+schema_version: 1
+
+sources:
+  - id: census-tigerweb
+    name: TIGER/Line boundaries via TIGERweb REST services
+    publisher: U.S. Census Bureau
+    license: Public domain (U.S. Government work)
+    homepage: https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
+    access:
+      - https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer
+    used_for: AOI boundaries (ZCTA, place, county, state)
+    notes: >-
+      ZCTAs approximate USPS ZIP code delivery areas and are not identical to them.
+      Geometry is generalized server-side (see Settings.aoi_simplify_deg).
+
+  - id: usgs-wbd
+    name: Watershed Boundary Dataset (HUC 2 through 12)
+    publisher: U.S. Geological Survey
+    license: Public domain (U.S. Government work)
+    homepage: https://www.usgs.gov/national-hydrography/watershed-boundary-dataset
+    access:
+      - https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer
+    used_for: Covering HUC12 set for an AOI; HUC selectors; per-HUC12 work chunks
